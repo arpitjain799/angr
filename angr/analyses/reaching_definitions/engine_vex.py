@@ -145,7 +145,7 @@ class SimEngineRDVEX(
     def _handle_Put(self, stmt):
         reg_offset: int = stmt.offset
         size: int = stmt.data.result_size(self.tyenv) // 8
-        reg = Register(reg_offset, size)
+        reg = Register(reg_offset, size, self.arch)
         data = self._expr(stmt.data)
 
         # special handling for references to heap or stack variables
@@ -337,7 +337,7 @@ class SimEngineRDVEX(
         bits: int = expr.result_size(self.tyenv)
         size: int = bits // self.arch.byte_width
 
-        reg_atom = Register(reg_offset, size)
+        reg_atom = Register(reg_offset, size, self.arch)
         try:
             values: MultiValues = self.state.register_definitions.load(reg_offset, size=size)
         except SimMemoryMissingError:
@@ -1051,6 +1051,7 @@ class SimEngineRDVEX(
 
         func_addr_int: int = func_addr_v._model_concrete.value
 
+        caller_codeloc = self._codeloc()
         codeloc = CodeLocation(func_addr_int, 0, None, func_addr_int, context=self._context)
 
         # direct calls
@@ -1060,6 +1061,10 @@ class SimEngineRDVEX(
             symbol = self.project.loader.find_symbol(func_addr_int)
         else:
             is_internal = True
+            ext_func_name = self.project.loader.find_plt_stub_name(func_addr_int)
+            if ext_func_name is not None:
+                is_internal = False
+                symbol = self.project.loader.find_symbol(ext_func_name)
 
         executed_rda = False
         if symbol is not None:
@@ -1090,7 +1095,7 @@ class SimEngineRDVEX(
             executed_rda, state = self._function_handler.handle_unknown_call(self.state, src_codeloc=self._codeloc())
             self.state = state
 
-        self.state.mark_call(codeloc, func_addr_int)
+        self.state.mark_call(caller_codeloc, func_addr_int)
         skip_cc = executed_rda
 
         return skip_cc
@@ -1121,7 +1126,7 @@ class SimEngineRDVEX(
                     reg_offset, reg_size = self.arch.registers[arg.reg_name]
                     self.state.add_register_use(reg_offset, reg_size, code_loc)
 
-                    atom = Register(reg_offset, reg_size)
+                    atom = Register(reg_offset, reg_size, self.arch)
                     self._tag_definitions_of_atom(atom, func_addr_int)
                 elif isinstance(arg, SimStackArg):
                     self.state.add_stack_use(arg.stack_offset, arg.size, self.arch.memory_endness, code_loc)
@@ -1139,7 +1144,7 @@ class SimEngineRDVEX(
                         elif isinstance(subargloc, SimRegArg):
                             self.state.add_register_use(subargloc.reg_offset, subargloc.size, code_loc)
 
-                            atom = Register(subargloc.reg_offset, subargloc.size)
+                            atom = Register(subargloc.reg_offset, subargloc.size, sef.arch)
                             self._tag_definitions_of_atom(atom, func_addr_int)
 
                     if min_stack_offset is not None:
@@ -1156,7 +1161,7 @@ class SimEngineRDVEX(
                         if isinstance(subargloc, SimRegArg):
                             self.state.add_register_use(subargloc.reg_offset, subargloc.size, code_loc)
 
-                            atom = Register(subargloc.reg_offset, subargloc.size)
+                            atom = Register(subargloc.reg_offset, subargloc.size, self.arch)
                             self._tag_definitions_of_atom(atom, func_addr_int)
                         elif isinstance(subargloc, SimStackArg):
                             if min_stack_offset is None:
@@ -1185,7 +1190,7 @@ class SimEngineRDVEX(
         if cc.RETURN_VAL is not None:
             if isinstance(cc.RETURN_VAL, SimRegArg):
                 reg_offset, reg_size = self.arch.registers[cc.RETURN_VAL.reg_name]
-                atom = Register(reg_offset, reg_size)
+                atom = Register(reg_offset, reg_size, self.arch)
                 tag = ReturnValueTag(
                     function=func_addr_int if isinstance(func_addr_int, int) else None,
                     metadata={"tagged_by": "SimEngineRDVEX._handle_function_cc"},
@@ -1200,7 +1205,7 @@ class SimEngineRDVEX(
         if cc.CALLER_SAVED_REGS is not None:
             for reg in cc.CALLER_SAVED_REGS:
                 reg_offset, reg_size = self.arch.registers[reg]
-                atom = Register(reg_offset, reg_size)
+                atom = Register(reg_offset, reg_size, self.arch)
                 self.state.kill_and_add_definition(
                     atom,
                     self._codeloc(),
@@ -1214,7 +1219,7 @@ class SimEngineRDVEX(
             if sp_v is not None and not self.state.is_top(sp_v):
                 sp_addr = sp_v - self.arch.stack_change
 
-                atom = Register(self.arch.sp_offset, self.arch.bytes)
+                atom = Register(self.arch.sp_offset, self.arch.bytes, self.arch)
                 tag = ReturnValueTag(
                     function=func_addr_int, metadata={"tagged_by": "SimEngineRDVEX._handle_function_cc"}
                 )
