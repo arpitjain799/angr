@@ -64,7 +64,9 @@ def _defaultdict_set():
 
 class VariableManagerInternal(Serializable):
     """
-    Manage variables for a function. It is meant to be used internally by VariableManager.
+    Manage variables for a function. It is meant to be used internally by VariableManager, but it's common to be
+    given a reference to one in response to a query for "the variables for a given function". Maybe a better name
+    would be "VariableManagerScope".
     """
 
     def __init__(self, manager, func_addr=None):
@@ -81,6 +83,7 @@ class VariableManagerInternal(Serializable):
         self._variable_accesses: Dict[SimVariable, Set[VariableAccess]] = defaultdict(set)
         self._insn_to_variable: Dict[int, Set[Tuple[SimVariable, int]]] = defaultdict(set)
         self._stmt_to_variable: Dict[Tuple[int, int], Set[Tuple[SimVariable, int]]] = defaultdict(set)
+        self._variable_to_stmt: Dict[SimVariable, Set[Tuple[int, int]]] = defaultdict(set)
         self._atom_to_variable: Dict[Tuple[int, int], Dict[int, Set[Tuple[SimVariable, int]]]] = defaultdict(
             _defaultdict_set
         )
@@ -247,6 +250,7 @@ class VariableManagerInternal(Serializable):
             model._insn_to_variable[variable_access.location.ins_addr].add(tpl)
             loc = (variable_access.location.block_addr, variable_access.location.stmt_idx)
             model._stmt_to_variable[loc].add(tpl)
+            model._variable_to_stmt[var].add(loc)
             if variable_access.atom_hash is not None:
                 model._atom_to_variable[loc][variable_access.atom_hash].add(tpl)
 
@@ -381,6 +385,7 @@ class VariableManagerInternal(Serializable):
         )
 
     def _record_variable_access(self, sort: int, variable, offset, location, overwrite=False, atom=None):
+        self._variable_to_stmt[variable].add(location)
         # TODO can this line be removed, should we be only adding to _variables in add_variable?
         self._variables.add(variable)
         var_and_offset = variable, offset
@@ -480,6 +485,9 @@ class VariableManagerInternal(Serializable):
 
     def find_variable_by_stmt(self, block_addr, stmt_idx, sort):
         return next(iter(self.find_variables_by_stmt(block_addr, stmt_idx, sort)), None)
+
+    def is_variable_used_at(self, variable: SimVariable, loc: Tuple[int, int]) -> bool:
+        return loc in self._variable_to_stmt[variable]
 
     def find_variables_by_stmt(self, block_addr: int, stmt_idx: int, sort: str) -> List[Tuple[SimVariable, int]]:
         key = block_addr, stmt_idx
